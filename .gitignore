@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.npy
+.claude-flow/
+.DS_Store
+
+# Never commit Kaggle credentials.
+kaggle.json
+access_token
+.env
