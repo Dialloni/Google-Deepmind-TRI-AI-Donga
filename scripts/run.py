@@ -59,7 +59,9 @@ def main(mode: str):
 
     elif mode == "submit":
         queries = test_q["query"].tolist()
-        scores = build(queries, corpus)["hybrid_rerank"]
+        ft = ROOT / "models" / "bge-base-ft"
+        model = str(ft) if ft.exists() else "BAAI/bge-base-en-v1.5"
+        scores = dense_scores(queries, corpus, model_name=model)
         path = ROOT / "submission.csv"
         sub = make_submission(scores, test_q.query_id.tolist(), doc_ids, path)
         assert len(sub) == 5 * len(test_q), f"expected 1000 rows, got {len(sub)}"
