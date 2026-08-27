@@ -51,6 +51,11 @@ the validation topics are excluded from training:
 - **Stripping query boilerplate hurt.** Queries come in template families
   ("How do I cope with X on my farm?"), and removing the template cost ~0.011
   on BM25 rather than helping.
+- **Query expansion with crop synonyms hurt.** Appending synonyms
+  (maize→corn, groundnut→peanut, fertiliser→fertilizer, ...) to 241/308
+  queries lowered every off-the-shelf encoder and the blend (0.8415 → 0.8368,
+  honest test, nothing trained). The encoders already model the synonymy;
+  the extra tokens only dilute the query embedding.
 - A ridge "linear adapter" mapping queries onto their positive centroid scored
   0.69 in CV -- it memorises train topics and does not transfer.
 - Train and test topics are disjoint (0 of 305 overlap), so nothing that keys
@@ -84,6 +89,13 @@ after `kagglehub.login()`) and export embeddings back into the repo root:
 | [colab_finetune2.py](notebooks/colab_finetune2.py) | `ft_embs2.npz` | 0.9225 |
 | [colab_finetune3.py](notebooks/colab_finetune3.py) | `ft_embs3.npz` | gte-large, fp32-forced |
 | [colab_rerank.py](notebooks/colab_rerank.py) | `ce_scores.npz` | cross-encoder, untried |
+| [colab_finetune4.py](notebooks/colab_finetune4.py) | `ft_embs4.npz` | round 2 + synthetic queries |
+
+colab_finetune4 clones this repo for [scripts/synth.py](scripts/synth.py),
+which turns every document title back into queries in the train template
+families (1,656 pairs). Rationale: train and test topics are disjoint, so
+synthetic queries are the only way the encoder meets test-only topic phrases
+(iron/magnesium/sulphur deficiency) during fine-tuning.
 
 ## Auth
 
