@@ -6,6 +6,38 @@ evidence behind it.
 
 Final submission: **0.92795 public / 0.92594 private, 4th place.**
 
+## How the pieces fit together
+
+Fine-tuning needs a GPU and runs in Colab; everything else runs locally on CPU.
+The `.npz` files are the handoff between the two.
+
+```mermaid
+flowchart TB
+  subgraph local[Local · CPU · no credentials]
+    D[(data/ — 695 docs<br/>308 train + 200 test queries<br/>qrels)]
+    OTS[4 off-the-shelf encoders<br/>cached to /tmp/donga_emb]
+    BL[blend → top-50 candidates]
+    LGB[LightGBM LambdaRank<br/>scripts/ltr.py]
+    TA[topic averaging]
+    SUB[[submission.csv<br/>0.92795 public]]
+  end
+  subgraph colab[Colab · T4 GPU · notebooks/]
+    HN[mine hard negatives<br/>from the base model's mistakes]
+    FT[fine-tune bge<br/>MultipleNegativesRankingLoss]
+    HO{{topic-grouped holdout<br/>the only honest local signal}}
+  end
+  D --> OTS --> BL
+  D --> HN --> FT --> HO
+  FT -. "exports ft_embs*.npz" .-> BL
+  BL --> LGB --> TA --> SUB
+  SUB --> LB{{Kaggle leaderboard<br/>referees every decision}}
+```
+
+The dotted edge is the only manual step: a notebook downloads `ft_embs*.npz`,
+you drop it in the repo root, and `ltr.py` picks it up as an extra encoder. All
+three that made the submission are already committed, so the local path runs
+start-to-finish without touching Colab.
+
 ## Leaderboard history
 
 | Submission | Public LB |
