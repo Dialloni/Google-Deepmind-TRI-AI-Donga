@@ -13,10 +13,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-DATA_DIR = Path.home() / (
+# The competition CSVs are committed under data/, so a fresh clone reproduces
+# the submission with no Kaggle credentials. scripts/download_data.py refetches
+# them into the kagglehub cache, which is the fallback.
+REPO_DATA = Path(__file__).resolve().parents[1] / "data"
+KAGGLE_CACHE = Path.home() / (
     ".cache/kagglehub/competitions/"
     "agricultural-extension-rag-smart-retrieval-for-farmers"
 )
+DATA_DIR = REPO_DATA if (REPO_DATA / "documents.csv").exists() else KAGGLE_CACHE
 
 # Query templates repeat across the whole query set, so their wording carries no
 # signal about which document is relevant -- only the topic phrase does.

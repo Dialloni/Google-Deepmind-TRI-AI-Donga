@@ -1,0 +1,12 @@
+# Pinned to the versions the submitted score was produced with.
+numpy>=1.26.4
+pandas>=2.2.3
+scikit-learn>=1.6.1
+lightgbm>=4.6.0
+rank-bm25>=0.2.2
+kagglehub>=1.0.2
+
+# Only needed to re-embed the corpus; the committed ft_embs*.npz let the
+# submission reproduce without them.
+sentence-transformers>=3.4.1
+torch>=2.7.0

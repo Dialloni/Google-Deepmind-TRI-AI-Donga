@@ -1,114 +1,130 @@
-# Donga — Agricultural Extension RAG (Kaggle)
+# Donga — Agricultural Extension RAG
 
-Retrieval for [Agricultural Extension RAG: Smart Retrieval for Farmers](https://www.kaggle.com/competitions/agricultural-extension-rag-smart-retrieval-for-farmers).
+Retrieval for the Kaggle competition *Agricultural Extension RAG: Smart
+Retrieval for Farmers*: given a smallholder farmer's question, rank the 5 most
+relevant documents from a 695-document corpus. Metric **nDCG@5**.
 
-Given a smallholder farmer's question, rank the 5 most relevant extension
-documents from a 695-doc corpus. Metric: **nDCG@5**.
+**Final submission: 0.92795 public / 0.92594 private — 4th place**, against a
+TF-IDF baseline of 0.551.
 
-## Status
+A **7-encoder ensemble reranked by LightGBM LambdaRank**. Three of the seven
+are `bge` models fine-tuned on the competition's own relevance judgements;
+those fine-tunes carried essentially all of the gain.
 
-Rank 2, public LB **0.92734** (leader 0.94076, TF-IDF baseline 0.551).
+## Dataset
 
-## Leaderboard history
+The competition dataset, used as issued — nothing added to or removed. All six
+CSVs are committed under [data/](data/) (496 KB), so the submission reproduces
+from a fresh clone with no Kaggle account: `documents.csv`
+(695 factsheets on crop diseases, pests, nutrient deficiencies, soil, fertiliser,
+climate adaptation), `train_queries.csv` (308 farmer-style questions),
+`qrels_train.csv` (graded relevance, 3 = perfect … 0 = irrelevant, ~14 judged
+documents per query), `test_queries.csv` (200 held-out questions).
 
-| Submission | Public LB |
-|---|---|
-| bge-base dense retrieval | 0.82640 |
-| 4-encoder blend + LightGBM LambdaRank | 0.86954 |
-| + bge-base fine-tuned on the qrels (Colab) | 0.91880 |
-| **+ bge-large fine-tuned, hard negatives, 2 seeds** | **0.92734** |
-| same, candidate list deepened to 350 | 0.92686 |
+Two properties drove every design decision. **Train and test topics are
+disjoint** — 0 of 305 topic phrases overlap — so nothing keyed to a specific
+crop or disease can generalise. And **queries arrive in template families**
+("How do I cope with X on my farm?", "What is the risk of X to farming?"), so
+the topic phrase carries the signal and the wrapper does not.
 
-The fine-tunes are measured honestly in Colab on a topic-grouped holdout, where
-the validation topics are excluded from training:
+We also *created* data: [scripts/synth.py](scripts/synth.py) re-wraps document
+titles into those templates for 1,656 synthetic pairs over all 695 documents.
+It made the model worse and is not in the submission.
 
-| Model | Holdout nDCG@5 |
-|---|---|
-| bge-base, off the shelf | 0.8191 |
-| bge-base, fine-tuned, random negatives | 0.8893 |
-| bge-large, fine-tuned, mined hard negatives | 0.9225 |
+## Training Pipeline
 
-## Findings
+    4 off-the-shelf bi-encoders (bge-base, bge-large, e5-large, gte-large)
+    + 3 fine-tuned on the qrels ─> cosine matrices ─> top-50 candidates
+    ─> LightGBM LambdaRank ─> topic averaging ─> top 5
 
-- **Fine-tuning on the qrels is the whole game.** Every leaderboard jump came
-  from a better fine-tuned encoder; feature work on top of them has been worth
-  roughly nothing.
-- **The local CV is inflated and cannot referee tuning decisions.** Both
-  fine-tuned encoders trained on all 308 train queries, so in cross-validation
-  the held-out queries were already seen by the encoder. Deepening the
-  candidate list from 50 to 350 gained 0.019 in CV and *lost* 0.0005 on the
-  leaderboard, because a deeper list makes the ranker lean harder on exactly
-  those in-sample features. Trustworthy CV would need out-of-fold fine-tunes,
-  one per fold.
-- Not pooling bias: at K=350 the ranker's top-5 are *less* likely to be judged
-  documents (0.856) than the plain blend's (0.870), so it is not learning to
-  recognise the training pool.
-- **gte-large diverges to NaN on Colab.** Its Hub weights are fp16 and
-  sentence-transformers honours that dtype, so Adam without loss scaling
-  overflows. Force `torch_dtype=torch.float32`.
-- **Lexical retrieval is dead weight here.** Every RRF weight on BM25 lowered
-  the score monotonically, so BM25 is out of the submission path.
-- **Stripping query boilerplate hurt.** Queries come in template families
-  ("How do I cope with X on my farm?"), and removing the template cost ~0.011
-  on BM25 rather than helping.
-- **Query expansion with crop synonyms hurt.** Appending synonyms
-  (maize→corn, groundnut→peanut, fertiliser→fertilizer, ...) to 241/308
-  queries lowered every off-the-shelf encoder and the blend (0.8415 → 0.8368,
-  honest test, nothing trained). The encoders already model the synonymy;
-  the extra tokens only dilute the query embedding.
-- A ridge "linear adapter" mapping queries onto their positive centroid scored
-  0.69 in CV -- it memorises train topics and does not transfer.
-- Train and test topics are disjoint (0 of 305 overlap), so nothing that keys
-  on a specific crop or disease will generalise.
+**Preprocessing.** Document text is the title weighted ×2 plus body. Queries
+stay verbatim: stripping the template cost ~0.011, so it is grammar the
+encoders use, not noise.
 
-## Usage
+**Stage 1 — fine-tuning** (Colab T4, [notebooks/](notebooks/)).
+`MultipleNegativesRankingLoss` over (query, positive, hard negative) triplets,
+negatives mined from the base model's own top-ranked mistakes, two seeds
+averaged. `gte-large` ships fp16 weights that overflow Adam without loss
+scaling, so it needs `torch_dtype=torch.float32`.
+
+**Stage 2 — LambdaRank fusion.** LightGBM (`n_estimators=300`, `lr=0.05`,
+`num_leaves=31`, `min_child_samples=10`) over per-candidate features: raw
+cosine per encoder, rank, per-query z-score, margin to best, BM25, crop and
+country match. Raw cosines are not comparable across queries — an easy query
+scores 0.9 against everything — hence the z-score and margin.
+
+**Stage 3 — topic averaging.** Queries sharing a topic phrase should retrieve
+the same documents, so their score rows are averaged, cancelling phrasing noise.
+
+**Hyperparameter search.** Candidate depth `TOP_K` was settled on the
+leaderboard, not locally: K=20 → 0.91921, **K=50 → 0.92795**, K=350 → 0.92686,
+while local CV rises monotonically with depth and is simply wrong. Ranker-side
+tuning is exhausted; see the log.
+
+## Evaluation
+
+Scored with **nDCG@5**, implemented in [src/pipeline.py](src/pipeline.py).
+
+**The local CV is inflated and cannot referee tuning decisions.** The
+fine-tuned encoders trained on all 308 train queries, so in 5-fold CV grouped
+by topic family the held-out queries were already seen by the encoder — honest
+CV would need an out-of-fold fine-tune per fold. Two honest signals instead:
+
+1. **A Colab topic-grouped holdout** excluding validation topics from the
+   fine-tune itself: bge-base off the shelf 0.8191 → fine-tuned on random
+   negatives 0.8893 → bge-large on mined hard negatives 0.9225.
+2. **The leaderboard, with ablations.** The same pipeline with stage 2 removed
+   (`submit-blend`) scored 0.90173 against 0.92795, putting the LambdaRank
+   stage at roughly +0.026.
+
+Every rejected idea was tested the same way and logged with its numbers in
+[docs/experiments.md](docs/experiments.md): query expansion (0.8415 → 0.8368),
+synthetic queries, cross-encoder reranking, BM25 fusion, a ridge adapter.
+
+## Reproduction
 
 ```bash
-python scripts/ltr.py eval          # grouped CV over every stage (see caveat above)
-python scripts/ltr.py submit        # write submission.csv from the full pipeline
-python scripts/ltr.py submit-blend  # ablation: encoder blend, no ranker
-
-python scripts/run.py eval          # the older single-encoder variants
-python scripts/sweep.py             # compare bi-encoders and their ensembles
-
-kaggle competitions submit \
-  -c agricultural-extension-rag-smart-retrieval-for-farmers \
-  -f submission.csv -m "message"
+pip install -r requirements.txt
+python scripts/ltr.py submit        # writes submission.csv
 ```
 
-Encoder embeddings cache to `/tmp/donga_emb`, so only the first run pays for
-them. Any `ft_embs*.npz` in the repo root is picked up as an extra encoder;
-files containing NaN are skipped with a warning.
+**No Kaggle credentials needed** — the dataset is in [data/](data/) and the
+fine-tuned embeddings (`ft_embs*.npz`) are committed. Verified: the output is
+byte-identical to the `submission.csv` here, the file scored 0.92795. The first
+run embeds the corpus with the four off-the-shelf encoders (~3 min on CPU) and
+caches to `/tmp/donga_emb`; later runs take seconds.
 
-The fine-tunes need a GPU, so they run in Colab (T4, paste one file per cell
-after `kagglehub.login()`) and export embeddings back into the repo root:
+Other entrypoints: `ltr.py eval` (grouped CV, inflated), `ltr.py submit-blend`
+(ablation without the ranker), `synth.py` and `rerank_submit.py` (the negative
+results), `sweep.py` (encoder comparison), `package.py` (archive),
+`download_data.py` (refetch from Kaggle — the only script wanting a token, read
+from `~/.kaggle/kaggle.json`, never the repo).
 
-| Notebook | Exports | Holdout |
-|---|---|---|
-| [colab_finetune.py](notebooks/colab_finetune.py) | `ft_embs.npz` | 0.8893 |
-| [colab_finetune2.py](notebooks/colab_finetune2.py) | `ft_embs2.npz` | 0.9225 |
-| [colab_finetune3.py](notebooks/colab_finetune3.py) | `ft_embs3.npz` | gte-large, fp32-forced |
-| [colab_rerank.py](notebooks/colab_rerank.py) | `ce_scores.npz` | cross-encoder, untried |
-| [colab_finetune4.py](notebooks/colab_finetune4.py) | `ft_embs4.npz` | round 2 + synthetic queries |
+Regenerating the fine-tuned encoders needs a GPU: upload a notebook from
+[notebooks/](notebooks/) to Colab (T4) — the table in
+[docs/experiments.md](docs/experiments.md) says which exports which.
 
-colab_finetune4 clones this repo for [scripts/synth.py](scripts/synth.py),
-which turns every document title back into queries in the train template
-families (1,656 pairs). Rationale: train and test topics are disjoint, so
-synthetic queries are the only way the encoder meets test-only topic phrases
-(iron/magnesium/sulphur deficiency) during fine-tuning.
+Layout: `data/` CSVs · `docs/` cards + experiment log · `src/` metric and
+fusion · `scripts/` entrypoints · `notebooks/` Colab fine-tunes.
 
-## Auth
+## Appendix
 
-Kaggle credentials live in `~/.kaggle/` (outside this repo) or the
-`KAGGLE_USERNAME` / `KAGGLE_KEY` env vars. Never hardcode a token in a file
-here.
+**Contributors** — Abubakar Diallo ([@Dialloni](https://github.com/Dialloni)):
+modelling, retrieval pipeline, fine-tuning, experiments. Dilrabo Khidirova
+([@iftihorbekd](https://github.com/iftihorbekd)): problem framing, data card,
+impact and stakeholder work.
 
-## Layout
+**Mentors** — *[to be filled]*
 
-    src/pipeline.py             retrievers, fusion, nDCG@5, submission writer
-    scripts/ltr.py              current pipeline: ensemble + LambdaRank
-    scripts/run.py              eval / submit entrypoint
-    scripts/sweep.py            encoder + ensemble comparison
-    scripts/download_data.py    fetch competition files via kagglehub
-    notebooks/colab_*.py        GPU fine-tunes, one file per Colab cell
-    notebooks/colab_submission.py
+**Cohort Challenges** (AI Saturdays Lagos, C10) —
+[problem statement](docs/problem_statement.pdf),
+[data card](docs/data_card.pdf),
+[impact statement card](docs/impact_statement_card.pdf),
+[stakeholder engagement](docs/stakeholder_engagement.pdf).
+
+## References
+
+- Competition: [Agricultural Extension RAG: Smart Retrieval for Farmers](https://www.kaggle.com/competitions/agricultural-extension-rag-smart-retrieval-for-farmers)
+- Full experiment log, every negative result with numbers: [docs/experiments.md](docs/experiments.md)
+- Encoders: [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5), [BAAI/bge-large-en-v1.5](https://huggingface.co/BAAI/bge-large-en-v1.5), [intfloat/e5-large-v2](https://huggingface.co/intfloat/e5-large-v2), [thenlper/gte-large](https://huggingface.co/thenlper/gte-large)
+- Reimers & Gurevych, *Sentence-BERT* (EMNLP 2019); Ke et al., *LightGBM* (NeurIPS 2017); Burges, *From RankNet to LambdaRank to LambdaMART* (2010)
