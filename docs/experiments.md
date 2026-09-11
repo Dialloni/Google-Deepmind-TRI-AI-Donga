@@ -172,7 +172,9 @@ holdout score, then downloads embeddings to drop in the repo root.
 | [colab_finetune4.py](../notebooks/colab_finetune4.py) | `ft_embs4.npz` | 0.9165 | yes (helps the blend) |
 | [colab_finetune3.py](../notebooks/colab_finetune3.py) | `ft_embs3.npz` | diverged, fp32 fix | no |
 | [colab_finetune5.py](../notebooks/colab_finetune5.py) | `ft_embs5.npz` | curriculum variant | no |
-| [colab_rerank2.py](../notebooks/colab_rerank2.py) | `ce2_scores.npz` | see above | no |
+| [colab_rerank.py](../notebooks/colab_rerank.py) | `ce_scores.npz` | round-3 cross-encoder, superseded | no |
+| [colab_rerank2.py](../notebooks/colab_rerank2.py) | `ce2_scores.npz` | 0.9169 → 0.9578 holdout | no |
+| [colab_rerank2_export.py](../notebooks/colab_rerank2_export.py) | `ce2_scores.npz` | stage-2-only rerun | no — but it produced the committed `ce2_scores.npz` |
 
 Any `ft_embs*.npz` in the repo root is picked up as an extra encoder
 automatically; files containing NaN are skipped with a warning. Off-the-shelf
