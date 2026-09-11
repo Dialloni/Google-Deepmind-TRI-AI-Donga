@@ -8,24 +8,22 @@ documents from a 695-document corpus. Metric **nDCG@5**.
 TF-IDF baseline of 0.551.
 
 Three of the seven encoders below are `bge` models fine-tuned on the
-competition's own relevance judgements; those fine-tunes carried essentially
-all of the gain.
+competition's own relevance judgements; those fine-tunes carried the gain.
 
 ## Dataset
 
-The competition dataset, used as issued — nothing added to or removed. All six
-CSVs are committed under [data/](data/) (496 KB), so the submission reproduces
-from a fresh clone with no Kaggle account: `documents.csv` (695 factsheets on
+The competition dataset, used as issued. All six CSVs are committed under
+[data/](data/) (496 KB), so the submission reproduces from a fresh clone with
+no Kaggle account: `documents.csv` (695 factsheets on
 crop diseases, pests, nutrient deficiencies, soil, fertiliser, climate),
 `train_queries.csv` (308 farmer-style questions), `qrels_train.csv` (graded
 relevance, 3 = perfect … 0 = irrelevant, ~14 judged per query),
 `test_queries.csv` (200 held-out questions).
 
-Two properties drove every design decision. **Train and test topics are
-disjoint** — 0 of 305 topic phrases overlap — so nothing keyed to a specific
-crop or disease can generalise. And **queries arrive in template families**
-("How do I cope with X on my farm?"), so the topic phrase carries the signal
-and the wrapper does not.
+Two properties drove the design. **Train and test topics are disjoint** — 0 of
+305 topic phrases overlap — so nothing keyed to a specific crop or disease can
+generalise. And **queries arrive in template families** ("How do I cope with X
+on my farm?"), so the topic phrase carries the signal, not the wrapper.
 
 We also *created* data: [scripts/synth.py](scripts/synth.py) re-wraps document
 titles into those templates for 1,656 synthetic pairs. It made the model worse
@@ -58,20 +56,20 @@ averaged. `gte-large` ships fp16 weights that overflow Adam, so it needs
 `num_leaves=31`, `min_child_samples=10`) over per-candidate features: raw
 cosine per encoder, rank, per-query z-score, margin to best, BM25, crop and
 country match. Raw cosines are not comparable across queries — hence the
-z-score and margin.
+z-score.
 
 **Stage 3 — topic averaging.** Queries sharing a topic phrase should retrieve
-the same documents, so their score rows are averaged, cancelling phrase noise.
+the same documents, so their score rows are averaged.
 
 **Hyperparameter search.** Candidate depth `TOP_K` was settled on the
-leaderboard, not locally: K=20 → 0.91921, **K=50 → 0.92795**, K=350 → 0.92686.
-Local CV rises monotonically with depth and is simply wrong.
+leaderboard, not locally: K=20 → 0.91921, **K=50 → 0.92795**, K=350 → 0.92686 —
+local CV rises with depth and is simply wrong.
 
 ## Evaluation
 
-Scored with **nDCG@5**, implemented in [src/pipeline.py](src/pipeline.py).
+Scored with **nDCG@5** ([src/pipeline.py](src/pipeline.py)).
 
-**The local CV is inflated and cannot referee tuning decisions.** The
+**The local CV is inflated and cannot referee tuning.** The
 fine-tuned encoders trained on all 308 train queries, so in 5-fold CV grouped
 by topic family the held-out queries were already seen by the encoder. Honest
 CV needs an out-of-fold fine-tune per fold. Two honest signals instead:
@@ -83,8 +81,7 @@ CV needs an out-of-fold fine-tune per fold. Two honest signals instead:
    scored 0.90173 against 0.92795, putting LambdaRank at roughly +0.026.
 
 Every rejected idea was tested the same way and logged with its numbers in
-[docs/experiments.md](docs/experiments.md): query expansion, synthetic queries,
-cross-encoder reranking, BM25 fusion, a ridge adapter.
+[docs/experiments.md](docs/experiments.md).
 
 ## Reproduction
 
@@ -93,27 +90,39 @@ pip install -r requirements.txt
 python scripts/ltr.py submit        # writes submission.csv
 ```
 
-**No Kaggle credentials needed** — the dataset is in [data/](data/) and the
-fine-tuned embeddings (`ft_embs*.npz`) are committed. Verified: the output is
-byte-identical to the `submission.csv` here, the file scored 0.92795. The first
-run embeds the corpus (~3 min on CPU), cached to `/tmp/donga_emb`; later runs
-take seconds.
+**No Kaggle credentials needed** — the dataset and the fine-tuned embeddings
+are committed. Verified: the output is byte-identical to the `submission.csv`
+here, the file scored 0.92795. The first run embeds the corpus (~3 min on CPU),
+cached to `/tmp/donga_emb`; later runs take seconds.
 
-Other entrypoints: `ltr.py eval` (grouped CV, inflated), `ltr.py submit-blend`
-(ablation without the ranker), `synth.py` and `rerank_submit.py` (the negative
-results), `sweep.py` (encoder comparison), `package.py` (archive),
-`download_data.py` (refetch from Kaggle — the only script wanting a token, read
-from `~/.kaggle/kaggle.json`, never the repo). Regenerating the fine-tunes
-needs a GPU: upload a notebook from [notebooks/](notebooks/) to Colab (T4) —
-the table in [docs/experiments.md](docs/experiments.md) says which does what.
+Regenerating the fine-tunes needs a GPU (Colab T4); the notebook table is in
+[docs/experiments.md](docs/experiments.md).
 
-    docs/       four challenge cards (.pdf) + experiments.md
-    scripts/    ltr.py (submitted pipeline) · synth · rerank_submit
-                sweep · finetune · download_data · package
-    src/        pipeline.py — retrieval, fusion, nDCG@5, submission writer
-    notebooks/  colab_* — GPU fine-tunes (.py per cell + .ipynb)
-    data/       competition CSVs
-    README.md · submission.csv · ft_embs*.npz · ce2_scores.npz
+    Google-Deepmind-TRI-AI-Donga/
+    ├── README.md
+    ├── requirements.txt
+    ├── submission.csv           the scored file
+    ├── docs/
+    │   ├── problem_statement.pdf
+    │   ├── data_card.pdf
+    │   ├── impact_statement_card.pdf
+    │   ├── stakeholder_engagement.pdf
+    │   └── experiments.md       experiment log
+    ├── scripts/
+    │   ├── ltr.py               the pipeline: submit | eval | submit-blend
+    │   ├── synth.py             synthetic queries (negative)
+    │   ├── rerank_submit.py     cross-encoder rerank (negative)
+    │   ├── sweep.py             encoder + ensemble comparison
+    │   ├── finetune.py          local fine-tune driver
+    │   ├── run.py               older single-encoder entrypoint
+    │   ├── download_data.py     refetch the dataset from Kaggle
+    │   └── package.py           build the archive
+    ├── src/
+    │   └── pipeline.py          retrieval, fusion, nDCG@5
+    ├── notebooks/               GPU fine-tunes
+    ├── data/                    competition CSVs
+    ├── ft_embs*.npz             fine-tuned embeddings
+    └── ce2_scores.npz           cross-encoder scores
 
 ## Appendix
 
